@@ -254,6 +254,7 @@ def run_team_classification(source_video_path: str, device: str) -> Iterator[np.
 
 
 
+
 def run_radar(source_video_path: str, device: str, csv_suffix: str = "") -> Iterator[np.ndarray]:
     import csv
     import os
@@ -274,8 +275,8 @@ def run_radar(source_video_path: str, device: str, csv_suffix: str = "") -> Iter
     frame_generator = sv.get_video_frames_generator(source_path=source_video_path)
     tracker = sv.ByteTrack(minimum_consecutive_frames=3)
     registrator = PitchRegistrator(CONFIG)
-
     frame_number = 0
+
     csv_filename = f"player_final_real_coords_{csv_suffix}.csv" if csv_suffix else "player_final_real_coords.csv"
     if not os.path.exists(csv_filename):
         with open(csv_filename, "w", newline="", encoding="utf-8") as f:
@@ -354,219 +355,6 @@ def run_radar(source_video_path: str, device: str, csv_suffix: str = "") -> Iter
 
         yield annotated_frame
 
-
-        referees = detections[detections.class_id == REFEREE_CLASS_ID]
-
-        detections = sv.Detections.merge([players, goalkeepers, referees])
-        color_lookup = np.array(
-            players_team_id.tolist() +
-            goalkeepers_team_id.tolist() +
-            [REFEREE_CLASS_ID] * len(referees)
-        )
-        labels = [str(tracker_id) for tracker_id in detections.tracker_id]
-
-        xy = detections.get_anchors_coordinates(sv.Position.BOTTOM_CENTER)
-        if len(xy) == 0:
-            annotated_frame = frame.copy()
-            annotated_frame = ELLIPSE_ANNOTATOR.annotate(annotated_frame, detections, custom_color_lookup=color_lookup)
-            annotated_frame = ELLIPSE_LABEL_ANNOTATOR.annotate(annotated_frame, detections, labels, custom_color_lookup=color_lookup)
-            yield annotated_frame
-            continue
-
-        pitch_H = registrator.register(
-            frame,
-            keypoints_xy=keypoints.xy[0].astype(np.float32),
-            keypoints_conf=keypoints.confidence[0].astype(np.float32) if keypoints.confidence is not None else None,
-        )
-
-        annotated_frame = frame.copy()
-        annotated_frame = ELLIPSE_ANNOTATOR.annotate(annotated_frame, detections, custom_color_lookup=color_lookup)
-        annotated_frame = ELLIPSE_LABEL_ANNOTATOR.annotate(annotated_frame, detections, labels, custom_color_lookup=color_lookup)
-        h, w, _ = frame.shape
-        radar = render_radar(detections, keypoints, color_lookup, registrator)
-        radar = sv.resize_image(radar, (w // 2, h // 2))
-        radar_h, radar_w, _ = radar.shape
-        rect = sv.Rect(x=w // 2 - radar_w // 2, y=h - radar_h, width=radar_w, height=radar_h)
-        annotated_frame = sv.draw_image(annotated_frame, radar, opacity=0.5, rect=rect)
-
-        if pitch_H is not None:
-            try:
-                pitch_xy = registrator.transform(xy)
-                x_min, y_min = pitch_xy.min(axis=0)
-                x_max, y_max = pitch_xy.max(axis=0)
-                real_x = (pitch_xy[:, 0] - x_min) / (x_max - x_min + 1e-8) * 105
-                real_y = (pitch_xy[:, 1] - y_min) / (y_max - y_min + 1e-8) * 68
-                with open(csv_filename, "a", newline="", encoding="utf-8") as f:
-                    writer = csv.writer(f)
-                    for i, (tid, (x, y), (px, py), team) in enumerate(
-                        zip(detections.tracker_id, xy, pitch_xy, color_lookup)
-                    ):
-                        writer.writerow([
-                            frame_number, int(tid),
-                            round(float(x), 2), round(float(y), 2),
-                            round(float(px), 2), round(float(py), 2),
-                            round(float(real_x[i]), 2), round(float(real_y[i]), 2),
-                            int(team)
-                        ])
-            except Exception:
-                pass
-
-        yield annotated_frame
-
-
-        referees = detections[detections.class_id == REFEREE_CLASS_ID]
-
-        detections = sv.Detections.merge([players, goalkeepers, referees])
-        color_lookup = np.array(
-            players_team_id.tolist() +
-            goalkeepers_team_id.tolist() +
-            [REFEREE_CLASS_ID] * len(referees)
-        )
-        labels = [str(tracker_id) for tracker_id in detections.tracker_id]
-
-        xy = detections.get_anchors_coordinates(sv.Position.BOTTOM_CENTER)
-        if len(xy) == 0:
-            annotated_frame = frame.copy()
-            annotated_frame = ELLIPSE_ANNOTATOR.annotate(annotated_frame, detections, custom_color_lookup=color_lookup)
-            annotated_frame = ELLIPSE_LABEL_ANNOTATOR.annotate(annotated_frame, detections, labels, custom_color_lookup=color_lookup)
-            yield annotated_frame
-            continue
-
-        pitch_H = registrator.register(
-            frame,
-            keypoints_xy=keypoints.xy[0].astype(np.float32),
-            keypoints_conf=keypoints.confidence[0].astype(np.float32) if keypoints.confidence is not None else None,
-        )
-
-        annotated_frame = frame.copy()
-        annotated_frame = ELLIPSE_ANNOTATOR.annotate(annotated_frame, detections, custom_color_lookup=color_lookup)
-        annotated_frame = ELLIPSE_LABEL_ANNOTATOR.annotate(annotated_frame, detections, labels, custom_color_lookup=color_lookup)
-        h, w, _ = frame.shape
-        radar = render_radar(detections, keypoints, color_lookup, registrator)
-        radar = sv.resize_image(radar, (w // 2, h // 2))
-        radar_h, radar_w, _ = radar.shape
-        rect = sv.Rect(x=w // 2 - radar_w // 2, y=h - radar_h, width=radar_w, height=radar_h)
-        annotated_frame = sv.draw_image(annotated_frame, radar, opacity=0.5, rect=rect)
-
-        if pitch_H is not None:
-            try:
-                pitch_xy = registrator.transform(xy)
-                x_min, y_min = pitch_xy.min(axis=0)
-                x_max, y_max = pitch_xy.max(axis=0)
-                real_x = (pitch_xy[:, 0] - x_min) / (x_max - x_min + 1e-8) * 105
-                real_y = (pitch_xy[:, 1] - y_min) / (y_max - y_min + 1e-8) * 68
-                with open(csv_filename, "a", newline="", encoding="utf-8") as f:
-                    writer = csv.writer(f)
-                    for i, (tid, (x, y), (px, py), team) in enumerate(
-                        zip(detections.tracker_id, xy, pitch_xy, color_lookup)
-                    ):
-                        writer.writerow([
-                            frame_number, int(tid),
-                            round(float(x), 2), round(float(y), 2),
-                            round(float(px), 2), round(float(py), 2),
-                            round(float(real_x[i]), 2), round(float(real_y[i]), 2),
-                            int(team)
-                        ])
-            except Exception:
-                pass
-
-        yield annotated_frame
-
-
-        goalkeepers_team_id = resolve_goalkeepers_team_id(players, players_team_id, goalkeepers)
-        referees = detections[detections.class_id == REFEREE_CLASS_ID]
-
-        detections = sv.Detections.merge([players, goalkeepers, referees])
-        color_lookup = np.array(
-            players_team_id.tolist() +
-            goalkeepers_team_id.tolist() +
-            [REFEREE_CLASS_ID] * len(referees)
-        )
-        labels = [str(tracker_id) for tracker_id in detections.tracker_id]
-
-        xy = detections.get_anchors_coordinates(sv.Position.BOTTOM_CENTER)
-        if len(xy) == 0:
-            annotated_frame = frame.copy()
-            annotated_frame = ELLIPSE_ANNOTATOR.annotate(annotated_frame, detections, custom_color_lookup=color_lookup)
-            annotated_frame = ELLIPSE_LABEL_ANNOTATOR.annotate(annotated_frame, detections, labels, custom_color_lookup=color_lookup)
-            yield annotated_frame
-            continue
-
-        # Robust pitch registration
-        pitch_H = registrator.register(
-            frame,
-            keypoints_xy=keypoints.xy[0].astype(np.float32),
-            keypoints_conf=keypoints.confidence[0].astype(np.float32) if keypoints.confidence is not None else None,
-        )
-
-        # Render radar (uses registrator H when available)
-        annotated_frame = frame.copy()
-        annotated_frame = ELLIPSE_ANNOTATOR.annotate(annotated_frame, detections, custom_color_lookup=color_lookup)
-        annotated_frame = ELLIPSE_LABEL_ANNOTATOR.annotate(annotated_frame, detections, labels, custom_color_lookup=color_lookup)
-        h, w, _ = frame.shape
-        radar = render_radar(detections, keypoints, color_lookup, registrator)
-        radar = sv.resize_image(radar, (w // 2, h // 2))
-        radar_h, radar_w, _ = radar.shape
-        rect = sv.Rect(x=w // 2 - radar_w // 2, y=h - radar_h, width=radar_w, height=radar_h)
-        annotated_frame = sv.draw_image(annotated_frame, radar, opacity=0.5, rect=rect)
-
-        # Write coordinates
-        if pitch_H is not None:
-            try:
-                pitch_xy = registrator.transform(xy)
-                x_min, y_min = pitch_xy.min(axis=0)
-                x_max, y_max = pitch_xy.max(axis=0)
-                real_x = (pitch_xy[:, 0] - x_min) / (x_max - x_min + 1e-8) * 105
-                real_y = (pitch_xy[:, 1] - y_min) / (y_max - y_min + 1e-8) * 68
-                with open(csv_filename, "a", newline="", encoding="utf-8") as f:
-                    writer = csv.writer(f)
-                    for i, (tid, (x, y), (px, py), team) in enumerate(
-                        zip(detections.tracker_id, xy, pitch_xy, color_lookup)
-                    ):
-                        writer.writerow([
-                            frame_number, int(tid),
-                            round(float(x), 2), round(float(y), 2),
-                            round(float(px), 2), round(float(py), 2),
-                            round(float(real_x[i]), 2), round(float(real_y[i]), 2),
-                            int(team)
-                        ])
-            except Exception:
-                pass
-
-        yield annotated_frame
-
-
-    if mode == Mode.PITCH_DETECTION:
-        frame_generator = run_pitch_detection(
-            source_video_path=source_video_path, device=device)
-    elif mode == Mode.PLAYER_DETECTION:
-        frame_generator = run_player_detection(
-            source_video_path=source_video_path, device=device)
-    elif mode == Mode.BALL_DETECTION:
-        frame_generator = run_ball_detection(
-            source_video_path=source_video_path, device=device)
-    elif mode == Mode.PLAYER_TRACKING:
-        frame_generator = run_player_tracking(
-            source_video_path=source_video_path, device=device)
-    elif mode == Mode.TEAM_CLASSIFICATION:
-        frame_generator = run_team_classification(
-            source_video_path=source_video_path, device=device)
-    elif mode == Mode.RADAR:
-        frame_generator = run_radar(
-            source_video_path=source_video_path, device=device, csv_suffix=csv_suffix)
-    else:
-        raise NotImplementedError(f"Mode {mode} is not implemented.")
-
-    video_info = sv.VideoInfo.from_video_path(source_video_path)
-    with sv.VideoSink(target_video_path, video_info) as sink:
-        for frame in frame_generator:
-            sink.write_frame(frame)
-"""
-            cv2.imshow("frame", frame)
-            if cv2.waitKey(1) & 0xFF == ord("q"):
-                break
-        cv2.destroyAllWindows()
-"""
 
 def main(source_video_path: str, target_video_path: str, device: str, mode: Mode, csv_suffix: str = "") -> None:
     if mode == Mode.PITCH_DETECTION:

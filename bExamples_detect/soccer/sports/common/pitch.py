@@ -237,11 +237,17 @@ class PitchRegistrator:
         if kpts_conf is not None and len(kpts_conf) == len(kpts_xy):
             valid = kpts_conf > conf_threshold
             src = kpts_xy[valid]
-            dst = self._target_pts[valid]
+            if len(valid) == len(self._target_pts):
+                dst = self._target_pts[valid]
+            else:
+                dst = self._target_pts[:len(valid)][valid]
         else:
             valid = (kpts_xy[:, 0] > 1) & (kpts_xy[:, 1] > 1)
             src = kpts_xy[valid]
-            dst = self._target_pts[valid]
+            if len(valid) == len(self._target_pts):
+                dst = self._target_pts[valid]
+            else:
+                dst = self._target_pts[:len(valid)][valid]
         n = len(src)
         if n < 2:
             return None
