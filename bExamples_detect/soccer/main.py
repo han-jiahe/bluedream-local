@@ -305,7 +305,10 @@ def run_radar(source_video_path: str, device: str, csv_suffix: str = "") -> Iter
             goalkeepers_team_id.tolist() +
             [REFEREE_CLASS_ID] * len(referees)
         )
-        labels = [str(tracker_id) for tracker_id in detections.tracker_id]
+        labels = [
+            str(tracker_id) if tracker_id is not None else str(i)
+            for i, tracker_id in enumerate(detections.tracker_id or [])
+        ]
 
         xy = detections.get_anchors_coordinates(sv.Position.BOTTOM_CENTER)
         if len(xy) == 0:
