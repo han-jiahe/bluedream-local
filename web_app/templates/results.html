@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><title>分析结果</title><link rel="stylesheet" href="/static/style.css"></head>
+<body>
+<main class="container">
+<h2>分析结果</h2>
+<p>任务: <code>{{ task_id }}</code></p>
+
+{% if merged_csv %}<p>合并 CSV: {{ merged_csv }} ({{ csv_count }} 个文件)</p>{% endif %}
+
+{% for label, path in charts %}
+<div class="card">
+    <h3>{{ label }}</h3>
+    <img src="/results-files/{{ task_id }}/{{ path }}" alt="{{ label }}" class="chart-img">
+</div>
+{% endfor %}
+
+{% if csvs %}
+<div class="card"><h3>数据文件</h3><ul>
+{% for f in csvs %}<li><a href="/results-files/{{ task_id }}/{{ f }}" download>{{ f }}</a></li>{% endfor %}
+{% for f in jsons %}<li><a href="/results-files/{{ task_id }}/{{ f }}" download>{{ f }}</a></li>{% endfor %}
+</ul></div>
+{% endif %}
+
+<a href="/" class="btn">返回上传</a>
+</main>
+</body>
+</html>
