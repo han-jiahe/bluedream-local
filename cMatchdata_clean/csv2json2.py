@@ -54,7 +54,7 @@ def build_samples(
                 "x": float(row["画面X"]),
                 "y": float(row["画面Y"]),
             },
-            "bbox": None,
+            "bbox": "NULL",
             "track_id": int(row["球员ID"]),
             "team": team,
             "field": {
@@ -110,14 +110,14 @@ def build_samples(
 
         left_goal = {
             "pixel": {"x": left_goal_pixel[0], "y": left_goal_pixel[1]},
-            "bbox": None,
+            "bbox": "NULL",
             "track_id": -1,
             "team": left_team,
             "field": {"x": left_goal_field[0], "y": left_goal_field[1]},
         }
         right_goal = {
             "pixel": {"x": right_goal_pixel[0], "y": right_goal_pixel[1]},
-            "bbox": None,
+            "bbox": "NULL",
             "track_id": -2,
             "team": right_team,
             "field": {"x": right_goal_field[0], "y": right_goal_field[1]},
