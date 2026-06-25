@@ -172,7 +172,8 @@ def generate_heatmap(
 
     xs, ys = zip(*positions)
     fig, ax = plt.subplots(figsize=(10.5, 6.8))
-    ax.hist2d(xs, ys, bins=(105, 68), range=[[0, 105], [0, 68]], cmap="hot", cmin=1)
+    h = ax.hist2d(xs, ys, bins=(105, 68), range=[[0, 105], [0, 68]], cmap="hot", cmin=1)
+    cbar = plt.colorbar(h[3], ax=ax, label="Frame Count")
     ax.set_xlim(0, PITCH_LENGTH)
     ax.set_ylim(0, PITCH_WIDTH)
     ax.set_title(f"Player {player_id} Heatmap")
@@ -260,4 +261,221 @@ def merge_csvs(csv_paths: List[Path], output_path: Path) -> Path:
         writer.writeheader()
         writer.writerows(all_rows)
 
+    return output_path
+
+
+# ── 单球员 VI 时序图 ────────────────────────────────────
+
+def generate_player_timeseries(voronoi_json: Path, player_id: int,
+                                output_path: Optional[Path] = None) -> Path:
+    """单球员 VI 时序图: 上=时序曲线+平滑, 下=分布直方图+KDE"""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from scipy.stats import gaussian_kde
+    from scipy.ndimage import uniform_filter1d
+
+    with open(voronoi_json, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    pid = str(player_id)
+    frames_data = {}
+    for fn, fdata in data.get("frames", {}).items():
+        pvi = fdata.get("player_vi", {}).get(pid)
+        if pvi is not None:
+            frames_data[int(fn)] = float(pvi)
+    if not frames_data:
+        raise ValueError(f"Player {player_id} not found")
+    sorted_fns = sorted(frames_data.keys())
+    vi_vals = [frames_data[fn] for fn in sorted_fns]
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 10))
+    ax1.plot(sorted_fns, vi_vals, alpha=0.4, color="#FF1493", lw=0.8, label="Frame VI")
+    if len(vi_vals) >= 10:
+        sm = uniform_filter1d(vi_vals, size=min(10, len(vi_vals)))
+        ax1.plot(sorted_fns, sm, color="#FF1493", lw=2, label="Smoothed")
+    mv = np.mean(vi_vals)
+    ax1.axhline(mv, color="green", ls="--", lw=1, label=f"Mean: {mv:.4f}")
+    ax1.set_xlabel("Frame"); ax1.set_ylabel("VI")
+    ax1.set_title(f"Player {player_id} — VI Time Series"); ax1.legend(); ax1.grid(alpha=0.3)
+
+    arr = np.array(vi_vals)
+    ax2.hist(arr, bins=20, density=True, alpha=0.6, color="steelblue", edgecolor="black")
+    try:
+        kde = gaussian_kde(arr, bw_method="scott")
+        xr = np.linspace(arr.min(), arr.max(), 200)
+        ax2.plot(xr, kde(xr), "r-", lw=2, label="KDE")
+    except Exception: pass
+    ax2.axvline(np.mean(arr), color="green", ls="--", label=f"Mean: {np.mean(arr):.4f}")
+    ax2.axvline(np.median(arr), color="orange", ls="--", label=f"Median: {np.median(arr):.4f}")
+    ax2.set_xlabel("VI"); ax2.set_ylabel("Density")
+    ax2.set_title(f"Player {player_id} — VI Distribution"); ax2.legend(); ax2.grid(alpha=0.3)
+    plt.tight_layout()
+
+    if output_path is None:
+        output_path = voronoi_json.parent / f"player_{player_id}_vi_timeseries.png"
+    plt.savefig(str(output_path), dpi=150, bbox_inches="tight"); plt.close(fig)
+    return output_path
+
+
+# ── 全场 VI 密度分布 ────────────────────────────────────
+
+def generate_vi_density(vi_json: Path, output_path: Optional[Path] = None) -> Path:
+    """全场 VI 概率密度: 直方图 + KDE + 均值/中位数"""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from scipy.stats import gaussian_kde
+
+    with open(vi_json, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    vi_values = np.array([d["average_vi"] for d in data])
+    vi_values = vi_values[vi_values >= 0]
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.hist(vi_values, bins=20, density=True, alpha=0.6, color="steelblue",
+            edgecolor="black", label="Histogram")
+    try:
+        kde = gaussian_kde(vi_values, bw_method="scott")
+        ax.plot(np.linspace(vi_values.min(), vi_values.max(), 200),
+                kde(np.linspace(vi_values.min(), vi_values.max(), 200)),
+                "r-", lw=2, label="KDE")
+    except Exception: pass
+    ax.axvline(np.mean(vi_values), color="green", ls="--", label=f"Mean: {np.mean(vi_values):.3f}")
+    ax.axvline(np.median(vi_values), color="orange", ls="--", label=f"Median: {np.median(vi_values):.3f}")
+    ax.set_xlabel("Average VI"); ax.set_ylabel("Density")
+    ax.set_title("VI Probability Density Distribution"); ax.legend(); ax.grid(alpha=0.6)
+    plt.tight_layout()
+
+    if output_path is None:
+        output_path = vi_json.parent / "vi_distribution_density.png"
+    plt.savefig(str(output_path), dpi=150, bbox_inches="tight"); plt.close(fig)
+    return output_path
+
+
+# ── 轨迹可视化 (真实坐标 105×68m) ──────────────────────
+
+_PLAYER_COLORS = ["#FF1493", "#00BFFF", "#FF6347", "#FFD700", "#7B68EE",
+                  "#00FA9A", "#FF8C00", "#1E90FF", "#DC143C", "#32CD32"]
+
+_BALL_COLOR = "#FF0000"
+
+
+def _draw_pitch(ax):
+    """在 axes 上绘制 105×68m 标准足球场"""
+    import matplotlib.patches as patches
+    # 边线
+    ax.plot([0, 105, 105, 0, 0], [0, 0, 68, 68, 0], c="black", lw=2)
+    # 中线
+    ax.plot([52.5, 52.5], [0, 68], c="black", lw=1.5)
+    # 中圈
+    ax.add_patch(patches.Arc((52.5, 34), 18.3, 18.3, angle=0, theta1=0, theta2=360,
+                             edgecolor="black", lw=1.5, fill=False))
+    # 禁区
+    ax.plot([0, 16.5, 16.5, 0], [13.84, 13.84, 54.16, 54.16], c="black", lw=1.5)
+    ax.plot([105, 88.5, 88.5, 105], [13.84, 13.84, 54.16, 54.16], c="black", lw=1.5)
+    # 小禁区
+    ax.plot([0, 5.5, 5.5, 0], [24.84, 24.84, 43.16, 43.16], c="black", lw=1.5)
+    ax.plot([105, 99.5, 99.5, 105], [24.84, 24.84, 43.16, 43.16], c="black", lw=1.5)
+    # 球门
+    for gx, gy in [(0, 30.34), (105, 30.34)]:
+        ax.add_patch(patches.Rectangle((gx - 0.5, gy - 2.67), 0.5, 5.34, fc="black", lw=1))
+    ax.set_xlim(-2, 107); ax.set_ylim(-2, 70)
+    ax.set_aspect("equal"); ax.axis("off")
+
+
+def generate_multi_player_trajectory(
+    csv_path: Path,
+    player_ids: List[int],
+    task_id: str,
+    include_ball: bool = False,
+    output_path: Optional[Path] = None,
+) -> Path:
+    """多球员轨迹 + 可选足球轨迹 (真实坐标 105×68m 球场)"""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    # 读 CSV
+    player_positions: Dict[int, List[tuple]] = {pid: [] for pid in player_ids}
+    ball_positions: List[tuple] = []
+
+    with open(csv_path, "r", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            pid = int(row.get("球员ID", -1))
+            rx = float(row.get("真实X(米)", 0))
+            ry = float(row.get("真实Y(米)", 0))
+            if pid in player_positions:
+                player_positions[pid].append((rx, ry))
+            if include_ball and pid == -3:
+                ball_positions.append((rx, ry))
+
+    fig, ax = plt.subplots(figsize=(12, 7.8))
+    _draw_pitch(ax)
+
+    # 球员轨迹
+    for i, pid in enumerate(player_ids):
+        pts = player_positions.get(pid, [])
+        if pts:
+            xs, ys = zip(*pts)
+            color = _PLAYER_COLORS[i % len(_PLAYER_COLORS)]
+            ax.plot(xs, ys, color=color, lw=1.5, alpha=0.7, label=f"P{pid}")
+            ax.scatter(xs[0], ys[0], color=color, s=60, marker="o", edgecolors="white", lw=0.5, zorder=5)
+            ax.scatter(xs[-1], ys[-1], color=color, s=80, marker="s", edgecolors="white", lw=0.5, zorder=5)
+    # 标记起点/终点图例
+    ax.scatter([], [], color="gray", s=60, marker="o", edgecolors="white", lw=0.5, label="Start")
+    ax.scatter([], [], color="gray", s=80, marker="s", edgecolors="white", lw=0.5, label="End")
+
+    # 足球轨迹
+    if include_ball and ball_positions:
+        bxs, bys = zip(*ball_positions)
+        ax.plot(bxs, bys, color=_BALL_COLOR, lw=2.5, alpha=0.6, linestyle="--", label="Ball")
+        ax.scatter(bxs[0], bys[0], color=_BALL_COLOR, s=70, marker="D", edgecolors="white", lw=0.5, zorder=5)
+
+    ax.legend(loc="upper right", fontsize=8, ncol=2)
+    ax.set_title(f"Player Trajectories{' + Ball' if include_ball else ''}", fontsize=12)
+    plt.tight_layout()
+
+    if output_path is None:
+        output_path = csv_path.parent / "player_trajectories.png"
+    plt.savefig(str(output_path), dpi=150, bbox_inches="tight"); plt.close(fig)
+    return output_path
+
+
+def generate_ball_trajectory(
+    csv_path: Path,
+    task_id: str,
+    output_path: Optional[Path] = None,
+) -> Optional[Path]:
+    """足球轨迹 (真实坐标 105×68m)"""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    positions = []
+    with open(csv_path, "r", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            pid = int(row.get("球员ID", -1))
+            if pid == -3:
+                rx = float(row.get("真实X(米)", 0))
+                ry = float(row.get("真实Y(米)", 0))
+                positions.append((rx, ry))
+
+    if not positions:
+        return None
+
+    fig, ax = plt.subplots(figsize=(12, 7.8))
+    _draw_pitch(ax)
+    xs, ys = zip(*positions)
+    ax.plot(xs, ys, color=_BALL_COLOR, lw=2.5, alpha=0.6, label="Ball")
+    ax.scatter(xs[0], ys[0], color="green", s=80, marker="D", edgecolors="white", lw=0.5, zorder=5, label="Start")
+    ax.scatter(xs[-1], ys[-1], color="red", s=80, marker="s", edgecolors="white", lw=0.5, zorder=5, label="End")
+    ax.legend(fontsize=9)
+    ax.set_title("Football Trajectory", fontsize=12)
+    plt.tight_layout()
+
+    if output_path is None:
+        output_path = csv_path.parent / "ball_trajectory.png"
+    plt.savefig(str(output_path), dpi=150, bbox_inches="tight"); plt.close(fig)
     return output_path

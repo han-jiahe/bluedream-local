@@ -2,6 +2,7 @@
 BlueDream Local v3 — Web 应用
 """
 
+import json
 import shutil
 import uuid
 from datetime import datetime
@@ -15,14 +16,27 @@ from starlette.templating import Jinja2Templates
 
 from config import (
     BASE_DIR, UPLOAD_DIR, OUTPUT_DIR,
-    ALLOWED_EXTENSIONS, FRAMES_PER_SEGMENT,
+    ALLOWED_EXTENSIONS,
 )
 from pipeline import (
-    split_video, merge_csvs,
+    merge_csvs,
     compute_voronoi_vi, compute_vi_distribution,
     generate_vi_chart, generate_player_ranking, generate_heatmap,
+    generate_player_timeseries, generate_vi_density,
+    generate_multi_player_trajectory, generate_ball_trajectory,
     csv_to_samples,
 )
+
+
+# ── 分析类型 ──────────────────────────────────────────
+
+ANALYSIS_TYPES = {
+    "full": "完整分析 (VI分布+排名+密度+Top3热力图)",
+    "player": "单球员分析 (VI时序+热力图)",
+    "trajectory": "轨迹可视化 (多球员+可选足球)",
+    "vi_only": "仅 VI 分布 (时序+密度+排名)",
+    "heatmap": "仅热力图",
+}
 
 app = FastAPI(title="BlueDream Local v3")
 
@@ -40,7 +54,7 @@ async def index():
 
 @app.post("/upload-video")
 async def upload_video(file: UploadFile = File(...)):
-    """上传视频并自动切分片段"""
+    """上传整段视频（不切分，保证球员 ID 一致性）"""
     if not file.filename:
         return JSONResponse({"error": "No file"}, status_code=400)
 
@@ -53,19 +67,11 @@ async def upload_video(file: UploadFile = File(...)):
     with open(save_path, "wb") as f:
         shutil.copyfileobj(file.file, f, length=8 * 1024 * 1024)
 
-    # Auto-split
-    seg_dir = OUTPUT_DIR / video_id / "segments"
-    segments = split_video(save_path, seg_dir, FRAMES_PER_SEGMENT)
-
     return JSONResponse({
         "video_id": video_id,
         "original_name": file.filename,
         "size_mb": round(save_path.stat().st_size / 1e6, 1),
-        "segments": len(segments),
-        "seg_dir": str(seg_dir),
-        "hint": f"将 {seg_dir} 中的 {len(segments)} 个片段传到 ModelArts Notebook, "
-                f"运行: cd bExamples_detect/soccer && python main.py --mode RADAR --source_video_path segment_0000.mp4 ... "
-                f"然后把生成的 CSV 文件上传回来",
+        "hint": "将视频传至 ModelArts Notebook，运行 RADAR 检测，下载生成的 CSV 后上传回来",
     })
 
 
@@ -95,8 +101,11 @@ async def analyze(
     request: Request,
     video_id: str = Form(""),
     task_id: str = Form(""),
+    analysis_type: str = Form("full"),
+    player_id: str = Form(""),
+    include_ball: str = Form("0"),
 ):
-    """运行 VI 分析，显示结果"""
+    """运行 VI 分析"""
     if task_id:
         task_dir = OUTPUT_DIR / task_id
     elif video_id:
@@ -107,38 +116,89 @@ async def analyze(
     if not task_dir.exists():
         return HTMLResponse(f"<h3>任务目录不存在: {task_dir}</h3>", status_code=404)
 
-    # Find CSV files
     csv_files = sorted(task_dir.glob("*.csv"))
     if not csv_files:
-        return HTMLResponse("<h3>未找到 CSV 文件，请先上传检测结果</h3>", status_code=400)
+        return HTMLResponse("<h3>未找到 CSV 文件</h3>", status_code=400)
 
-    # Merge if multiple
     merged_csv = task_dir / "merged_coords.csv"
     if len(csv_files) > 1:
         merge_csvs(csv_files, merged_csv)
     else:
         merged_csv = csv_files[0]
 
-    # VI Analysis
     try:
-        voronoi_json = compute_voronoi_vi(merged_csv)
-        ranking_chart = generate_player_ranking(voronoi_json)
-        vi_chart_path = None
+        charts = []
 
-        # Try clustering VI if samples.json available
+        # ── Voronoi VI (所有分析类型都需要) ──
+        voronoi_json = compute_voronoi_vi(merged_csv)
+
+        # ── Clustering VI ──
         samples_json = task_dir / "samples.json"
+        vi_json = None
         try:
             csv_to_samples(merged_csv, samples_json)
             vi_json = compute_vi_distribution(samples_json)
-            vi_chart_path = generate_vi_chart(vi_json)
         except Exception:
-            vi_chart_path = None
+            pass
 
-        charts = []
-        if vi_chart_path:
-            charts.append(("VI 分布图", vi_chart_path.name))
-        if ranking_chart:
-            charts.append(("球员 VI 排名", ranking_chart.name))
+        # ── 按分析类型生成图表 ──
+        if analysis_type == "full":
+            if vi_json:
+                charts.append(("VI 分布时序", generate_vi_chart(vi_json).name))
+                charts.append(("VI 概率密度", generate_vi_density(vi_json).name))
+            rc = generate_player_ranking(voronoi_json)
+            if rc:
+                charts.append(("球员 VI 排名", rc.name))
+            # Top 3 球员热力图
+            with open(voronoi_json, "r", encoding="utf-8") as f:
+                vdata = json.load(f)
+            top_players = list({pid for fdata in vdata.get("frames", {}).values()
+                               for pid in fdata.get("player_vi", {}).keys()})[:3]
+            for pid_str in top_players:
+                pid = int(pid_str)
+                charts.append((f"Player {pid} 热力图",
+                              generate_heatmap(merged_csv, pid).name))
+
+        elif analysis_type == "player" and player_id:
+            pid = int(player_id.strip())
+            charts.append((f"Player {pid} VI 时序",
+                          generate_player_timeseries(voronoi_json, pid).name))
+            charts.append((f"Player {pid} 热力图",
+                          generate_heatmap(merged_csv, pid).name))
+
+        elif analysis_type == "vi_only":
+            if vi_json:
+                charts.append(("VI 分布时序", generate_vi_chart(vi_json).name))
+                charts.append(("VI 概率密度", generate_vi_density(vi_json).name))
+            rc = generate_player_ranking(voronoi_json)
+            if rc:
+                charts.append(("球员 VI 排名", rc.name))
+
+        elif analysis_type == "trajectory" and player_id:
+            ids = [int(x.strip()) for x in player_id.replace(",", " ").split() if x.strip()]
+            show_ball = include_ball == "1"
+            if ids:
+                traj_path = generate_multi_player_trajectory(
+                    merged_csv, ids, task_dir.name, include_ball=show_ball
+                )
+                charts.append(("球员轨迹", traj_path.name))
+            if show_ball:
+                ball_path = generate_ball_trajectory(merged_csv, task_dir.name)
+                if ball_path:
+                    charts.append(("足球轨迹", ball_path.name))
+
+        elif analysis_type == "heatmap" and player_id:
+            pid = int(player_id.strip())
+            charts.append((f"Player {pid} 热力图",
+                          generate_heatmap(merged_csv, pid).name))
+
+        else:
+            # default: same as full
+            if vi_json:
+                charts.append(("VI 分布时序", generate_vi_chart(vi_json).name))
+            rc = generate_player_ranking(voronoi_json)
+            if rc:
+                charts.append(("球员 VI 排名", rc.name))
 
         return templates.TemplateResponse("results.html", {
             "request": request,
@@ -150,8 +210,7 @@ async def analyze(
 
     except Exception as e:
         return HTMLResponse(
-            f"<h3>分析失败</h3><pre>{e}</pre>",
-            status_code=500,
+            f"<h3>分析失败</h3><pre>{e}</pre>", status_code=500,
         )
 
 
