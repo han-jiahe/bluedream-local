@@ -9,12 +9,12 @@
 
 ```
 本地 Windows (Web GUI)              ModelArts Notebook (GPU)
-┌─────────────────────┐            ┌──────────────────────┐
-│  python main.py     │            │  python main.py      │
-│  http://127.0.0.1:8000 │  ──SSH──▶ │  --mode RADAR        │
-│                     │   Jupyter  │  --device cuda       │
-│  上传视频 + 查看结果  │  手动传文件 │  batch_process.py    │
-└─────────────────────┘            └──────────────────────┘
+┌────────────────────────┐            ┌──────────────────────┐
+│  python main.py        │            │  python main.py      │
+│  http://127.0.0.1:8000 │  ──SSH──▶    --mode RADAR        │
+│                        │   Jupyter  │  --device cuda       │
+│  Video  to   results   |  transport |  batch_process.py    │
+└────────────────────────┘            └──────────────────────┘
 ```
 
 **工作流**: 本地 Web 上传视频 → 传到 Notebook → GPU 检测 → 下载 CSV → 本地 VI 分析 → 图表
