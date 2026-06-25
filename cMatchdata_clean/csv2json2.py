@@ -42,12 +42,10 @@ def build_samples(
         frame_num = int(row["帧号"])
         team_value = int(row["队伍"])
 
-        if team_value == 0:
-            team = "home"
-        elif team_value == 1:
-            team = "away"
-        else:
-            team = "referee"
+        if team_value not in (0, 1):
+            continue  # 跳过裁判等其他目标
+
+        team = "home" if team_value == 0 else "away"
 
         player = {
             "pixel": {
