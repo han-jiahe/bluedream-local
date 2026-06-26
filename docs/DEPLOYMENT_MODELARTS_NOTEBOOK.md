@@ -32,7 +32,55 @@
 | 存储 | 默认 (50GB) |
 | VPC | 任意（不跟 ECS 通信） |
 
-### 2.2 创建后
+### 2.2 创建 SSH 密钥对（用于远程文件传输）
+
+1. 控制台 → ModelArts → Notebook → 点击实例名称进入详情页
+2. 找到 **"远程访问"** 或 **"SSH 密钥对"** → 点击 **"创建密钥对"**
+3. 名称自定义（如 `notebook-key`），类型选 **SSH_RSA_2048**
+4. 点击确定 → 自动下载 `.pem` 私钥文件到本地
+5. 将 `.pem` 文件放到 `%USERPROFILE%\.ssh\` 目录下：
+
+```powershell
+copy C:\Users\HJH\Downloads\notebook-key.pem %USERPROFILE%\.ssh\
+```
+
+> ⚠️ **私钥托管**：不需要勾选"将私钥托管到华为云"。仅本地保存即可。
+>
+> ⚠️ **SSH 直连限制**：ModelArts Notebook 处于 HTTP 代理后（`proxy.modelarts.com:80`），公网 SSH 连接可能被拦截。如果 SSH 不通，用 JupyterLab 网页界面传输文件（见 §2.3）同样方便。
+
+### 2.3 文件传输方式
+
+**方式 A — JupyterLab 网页上传（推荐，无网络限制）**
+
+1. 控制台点击"打开"进入 JupyterLab
+2. 左侧文件浏览器 → 进入目标目录（如 `bluedream-local/bExamples_detect/soccer/`）
+3. 点击工具栏 **↑ 上传按钮** → 选择本地视频文件 → 等待上传完成
+4. 下载结果时：右键文件 → **"Download"** 保存到本地
+
+> 适合 500MB 以内的视频，大文件建议用 obsutil 经 OBS 中转。
+
+**方式 B — 本地建 SSH 隧道传输（需要 Notebook 公网可达）**
+
+在本地 Windows 终端建立 SSH 会话：
+
+```powershell
+# 查看 Notebook 详情页的 SSH 连接地址，格式类似:
+# ssh://ma-user@dev-modelarts-cnnorth4.huaweicloud.com:31248
+
+ssh -i %USERPROFILE%\.ssh\notebook-key.pem ma-user@dev-modelarts-cnnorth4.huaweicloud.com -p 31248
+```
+
+连接成功后可通过 `scp` 传文件：
+
+```powershell
+# 上传视频
+scp -i %USERPROFILE%\.ssh\notebook-key.pem -P 31248 video.mp4 ma-user@dev-modelarts-cnnorth4.huaweicloud.com:/home/ma-user/work/bluedream-local/
+
+# 下载 CSV
+scp -i %USERPROFILE%\.ssh\notebook-key.pem -P 31248 ma-user@dev-modelarts-cnnorth4.huaweicloud.com:/home/ma-user/work/bluedream-local/bExamples_detect/soccer/player_final_real_coords.csv .
+```
+
+### 2.4 创建后初次打开
 
 状态变为"运行中"后，点击"打开"进入 JupyterLab，打开终端。
 
