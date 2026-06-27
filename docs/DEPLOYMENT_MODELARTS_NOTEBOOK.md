@@ -271,6 +271,34 @@ python main.py --source_video_path <视频名> --target_video_path out.mp4 --dev
 
 > 如果 `~/.bashrc` 已写入环境变量，`LD_LIBRARY_PATH` 和 `HF_ENDPOINT` 会自动设置。
 
+> 如果原环境已失效，则重新构建环境（不需要克隆）
+```bash
+conda create -n soccer python=3.10 -y
+conda activate soccer
+```
+```bash
+pip install "numpy<2"
+pip install torch==1.12.1+cu113 torchvision==0.13.1+cu113 \
+  -f https://download.pytorch.org/whl/torch_stable.html
+```
+```bash
+export LD_LIBRARY_PATH=$(python -c \
+  "import torch; print(torch.utils.cmake_prefix_path.replace('/share/cmake', '/lib'))"):$LD_LIBRARY_PATH
+python -c "import torch; t=torch.zeros(1).cuda(); print('CUDA OK')"
+```
+```bash
+pip install ultralytics
+pip install git+https://github.com/roboflow/sports.git
+pip install "transformers==4.37.0"
+pip install "numpy<2"
+```
+```bash
+conda activate soccer
+export LD_LIBRARY_PATH=$(python -c \
+  "import torch; print(torch.utils.cmake_prefix_path.replace('/share/cmake', '/lib'))"):$LD_LIBRARY_PATH
+export HF_ENDPOINT=https://hf-mirror.com
+```
+
 ---
 
 ## 8. 性能优化总结
