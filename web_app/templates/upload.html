@@ -42,16 +42,17 @@
         <label><b>分析类型:</b></label>
         <select id="analysis-type" style="margin-left:.5rem; padding:.4rem; font-size:1rem">
             <option value="full">完整分析 (VI时序+密度+排名+Top3热力图)</option>
-            <option value="player">单球员分析 (VI时序+热力图)</option>
+            <option value="player">单球员分析 (VI+球队对比+热力图)</option>
             <option value="trajectory">轨迹可视化 (多球员+足球)</option>
+            <option value="voronoi">Voronoi 多边形 (按%选帧)</option>
             <option value="vi_only">仅 VI 分布 (时序+密度+排名)</option>
             <option value="heatmap">仅热力图</option>
         </select>
     </div>
 
     <div id="player-id-group" style="display:none; margin-top:.5rem">
-        <label>球员 ID:</label>
-        <input type="text" id="player-id-input" placeholder="单球员输入数字; 轨迹输入如 1,3,7" style="padding:.4rem; margin-left:.5rem; width:220px">
+        <label>参数:</label>
+        <input type="text" id="player-id-input" placeholder="球员ID / 轨迹ID列表 / Voronoi百分比" style="padding:.4rem; margin-left:.5rem; width:220px">
     </div>
     <div id="ball-group" style="display:none; margin-top:.5rem">
         <label><input type="checkbox" id="include-ball"> 同时显示足球轨迹</label>
@@ -66,7 +67,7 @@
 <script>
 document.getElementById('analysis-type').addEventListener('change', function(){
     var v = this.value;
-    document.getElementById('player-id-group').style.display = (v === 'player' || v === 'heatmap' || v === 'trajectory') ? 'block' : 'none';
+    document.getElementById('player-id-group').style.display = (v === 'player' || v === 'heatmap' || v === 'trajectory' || v === 'voronoi') ? 'block' : 'none';
     document.getElementById('ball-group').style.display = (v === 'trajectory') ? 'block' : 'none';
 });
 </script>

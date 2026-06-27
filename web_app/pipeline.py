@@ -59,8 +59,8 @@ def compute_vi_distribution(
         output_path = samples_json.parent / "VI_distribution.json"
 
     _compute(
-        input_json=str(samples_json),
-        output_json=str(output_path),
+        samples_json_path=str(samples_json),
+        output_json_path=str(output_path),
         window_size=window_size,
     )
     return output_path
@@ -477,5 +477,209 @@ def generate_ball_trajectory(
 
     if output_path is None:
         output_path = csv_path.parent / "ball_trajectory.png"
+    plt.savefig(str(output_path), dpi=150, bbox_inches="tight"); plt.close(fig)
+    return output_path
+
+
+# ── 球员/球队 VI 对比 + ratio ──────────────────────────
+
+def _load_team_map(csv_path: Path) -> Dict[int, str]:
+    """从 CSV 读取 player_id -> team (home/away) 映射"""
+    team_map = {}
+    with open(csv_path, "r", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            pid = int(row.get("球员ID", -1))
+            team_val = int(row.get("队伍", -1))
+            if pid > 0 and team_val in (0, 1):
+                team_map[pid] = "home" if team_val == 0 else "away"
+    return team_map
+
+
+def generate_player_with_team_vi(
+    voronoi_json: Path,
+    csv_path: Path,
+    player_id: int,
+    output_path: Optional[Path] = None,
+) -> Path:
+    """单球员 VI + 球队均值对比 + ratio 柱状图"""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    with open(voronoi_json, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    team_map = _load_team_map(csv_path)
+    player_team = team_map.get(player_id, None)
+
+    pid = str(player_id)
+    frames_data: Dict[int, float] = {}
+    home_vi: Dict[int, List[float]] = defaultdict(list)
+    away_vi: Dict[int, List[float]] = defaultdict(list)
+
+    for fn_str, fdata in data.get("frames", {}).items():
+        fn = int(fn_str)
+        player_vi_map = fdata.get("player_vi", {})
+        if pid in player_vi_map:
+            frames_data[fn] = float(player_vi_map[pid])
+        # 按球队分组
+        for opid, vi_val in player_vi_map.items():
+            opid_int = int(opid)
+            team = team_map.get(opid_int)
+            if team == "home":
+                home_vi.setdefault(fn, []).append(float(vi_val))
+            elif team == "away":
+                away_vi.setdefault(fn, []).append(float(vi_val))
+
+    if not frames_data:
+        raise ValueError(f"Player {player_id} not found")
+
+    sorted_fns = sorted(frames_data.keys())
+    player_vals = [frames_data[fn] for fn in sorted_fns]
+    home_avg = [np.mean(home_vi.get(fn, [0])) for fn in sorted_fns]
+    away_avg = [np.mean(away_vi.get(fn, [0])) for fn in sorted_fns]
+
+    fig = plt.figure(figsize=(16, 6))
+    gs = fig.add_gridspec(1, 2, width_ratios=[3, 1])
+
+    # Left: timeseries
+    ax1 = fig.add_subplot(gs[0])
+    ax1.plot(sorted_fns, player_vals, color="#FF1493", lw=2, alpha=0.8, label=f"P{player_id}")
+    ax1.plot(sorted_fns, home_avg, color="#1E90FF", lw=1.5, alpha=0.6, linestyle="--", label="Home avg")
+    ax1.plot(sorted_fns, away_avg, color="#FF6347", lw=1.5, alpha=0.6, linestyle="--", label="Away avg")
+    ax1.set_xlabel("Frame"); ax1.set_ylabel("VI")
+    ax1.set_title(f"Player {player_id} VI vs Team Averages"); ax1.legend(); ax1.grid(alpha=0.3)
+
+    # Right: ratio bar
+    ax2 = fig.add_subplot(gs[1])
+    player_mean = np.mean(player_vals)
+    team_vals = []
+    team_labels = []
+    if home_avg:
+        team_vals.append(np.mean(home_avg))
+        team_labels.append("Home")
+    if away_avg:
+        team_vals.append(np.mean(away_avg))
+        team_labels.append("Away")
+
+    all_means = [player_mean] + team_vals
+    all_labels = [f"P{player_id}"] + team_labels
+    colors = ["#FF1493"] + ["#1E90FF", "#FF6347"][:len(team_vals)]
+    bars = ax2.bar(all_labels, all_means, color=colors)
+    ax2.set_ylabel("Mean VI")
+    ax2.set_title("Player vs Team VI")
+
+    # 标注 ratio
+    for i, (label, val) in enumerate(zip(all_labels, all_means)):
+        if i == 0:
+            for j, tv in enumerate(team_vals):
+                ratio = player_mean / tv if tv > 0 else 0
+                team_name = {0: "Home", 1: "Away"}.get(j, "T")
+                ax2.text(i, val, f'{val:.4f}\nvs {team_name}: {ratio:.2f}x',
+                         ha="center", va="bottom", fontsize=9, color="#333")
+
+    plt.tight_layout()
+
+    if output_path is None:
+        output_path = voronoi_json.parent / f"player_{player_id}_team_vi.png"
+    plt.savefig(str(output_path), dpi=150, bbox_inches="tight"); plt.close(fig)
+    return output_path
+
+
+# ── Voronoi 多边形查看器 ────────────────────────────────
+
+def generate_voronoi_frame(
+    voronoi_json: Path,
+    csv_path: Path,
+    percentage: float = 50,
+    output_path: Optional[Path] = None,
+) -> Path:
+    """按百分比选择帧，可视化 Voronoi 多边形"""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from scipy.spatial import Voronoi
+    from shapely.geometry import Polygon, Point
+
+    with open(voronoi_json, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    frames_dict = data.get("frames", {})
+    if not frames_dict:
+        raise ValueError("No voronoi data")
+
+    frame_keys = sorted(frames_dict.keys(), key=int)
+    idx = max(0, min(len(frame_keys) - 1, int(len(frame_keys) * percentage / 100)))
+    selected_fn = frame_keys[idx]
+    fdata = frames_dict[selected_fn]
+
+    # 读取球员位置
+    positions = {}
+    team_map = _load_team_map(csv_path)
+    with open(csv_path, "r", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            fn = int(row.get("帧号", -1))
+            pid = int(row.get("球员ID", -1))
+            if fn == int(selected_fn) and pid > 0 and pid in team_map:
+                positions[pid] = (
+                    float(row.get("真实X(米)", 0)),
+                    float(row.get("真实Y(米)", 0)),
+                )
+
+    if len(positions) < 4:
+        raise ValueError(f"Not enough players at frame {selected_fn}")
+
+    # Voronoi 剖分
+    pts = np.array(list(positions.values()))
+    # 添加镜像点扩展边界
+    extended = np.vstack([pts,
+        pts + [105, 0], pts - [105, 0],
+        pts + [0, 68], pts - [0, 68],
+        pts + [105, 68], pts - [105, 68],
+    ])
+    vor = Voronoi(extended)
+
+    fig, ax = plt.subplots(figsize=(12, 7.8))
+    _draw_pitch(ax)
+
+    pid_list = list(positions.keys())
+    player_vi = fdata.get("player_vi", {})
+
+    for i, pid in enumerate(pid_list):
+        region_idx = vor.point_region[i]
+        region = vor.regions[region_idx]
+        if -1 in region or not region:
+            continue
+        poly = Polygon([vor.vertices[j] for j in region])
+        # 裁剪到球场
+        pitch = Polygon([(0, 0), (105, 0), (105, 68), (0, 68)])
+        clipped = poly.intersection(pitch)
+        if not clipped.is_empty:
+            team = team_map.get(pid, "unknown")
+            color = "#1E90FF" if team == "home" else "#FF6347"
+            alpha = 0.3
+            try:
+                xs, ys = clipped.exterior.xy
+                ax.fill(xs, ys, color=color, alpha=alpha, edgecolor="gray", lw=0.5)
+            except Exception:
+                pass
+
+    # 球员点 + VI 标注
+    for pid in pid_list:
+        x, y = positions[pid]
+        team = team_map.get(pid, "unknown")
+        color = "#1E90FF" if team == "home" else "#FF6347"
+        ax.plot(x, y, "o", color=color, markersize=7, markeredgecolor="white", markeredgewidth=0.5)
+        vi_label = f"{float(player_vi.get(str(pid), 0)):.3f}"
+        ax.annotate(f"P{pid}\n{vi_label}", (x, y), fontsize=6, ha="center", va="bottom",
+                    color=color, alpha=0.9)
+
+    pct_label = f"{percentage:.0f}%"
+    ax.set_title(f"Voronoi Tessellation — Frame {selected_fn} ({pct_label} of match)")
+
+    if output_path is None:
+        output_path = voronoi_json.parent / f"voronoi_frame_{int(percentage)}.png"
     plt.savefig(str(output_path), dpi=150, bbox_inches="tight"); plt.close(fig)
     return output_path
