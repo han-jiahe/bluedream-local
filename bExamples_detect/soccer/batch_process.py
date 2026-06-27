@@ -22,6 +22,11 @@ from pathlib import Path
 from typing import List, Optional
 
 import numpy as np
+import supervision as sv
+from ultralytics import YOLO
+from sports.common.team import TeamClassifier
+from sports.common.pitch import PitchRegistrator
+from sports.configs.soccer import SoccerPitchConfiguration
 
 # ── Worker 进程 ───────────────────────────────────────────
 
@@ -37,12 +42,6 @@ class SegmentWorker(Process):
 
     def run(self):
         os.environ["CUDA_VISIBLE_DEVICES"] = str(self.gpu_id)
-
-        import supervision as sv
-        from ultralytics import YOLO
-        from sports.common.team import TeamClassifier
-        from sports.common.pitch import PitchRegistrator
-        from sports.configs.soccer import SoccerPitchConfiguration
 
         CONFIG = SoccerPitchConfiguration()
         PARENT_DIR = Path(__file__).resolve().parent
@@ -101,8 +100,6 @@ class SegmentWorker(Process):
         self, player_model, pitch_model, ball_model,
         CONFIG, video_path: str, csv_output: str,
     ):
-        import supervision as sv
-
         # Phase 1: 收集 crops 训练球队分类器
         frame_gen = sv.get_video_frames_generator(
             source_path=video_path, stride=60
