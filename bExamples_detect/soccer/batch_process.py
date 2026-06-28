@@ -105,7 +105,8 @@ class SegmentWorker(Process):
             source_path=video_path, stride=60
         )
         crops = []
-        for frame in frame_gen:
+        for item in frame_gen:
+            frame = item[0] if isinstance(item, tuple) else item
             result = player_model(frame, imgsz=960, verbose=False)[0]
             detections = sv.Detections.from_ultralytics(result)
             players = detections[detections.class_id == 2]
@@ -129,7 +130,8 @@ class SegmentWorker(Process):
             w = csv.writer(f)
             w.writerow(["帧号","球员ID","画面X","画面Y","雷达X","雷达Y","真实X(米)","真实Y(米)","队伍"])
 
-        for frame in frame_gen:
+        for item in frame_gen:
+            frame = item[0] if isinstance(item, tuple) else item
             frame_number += 1
             # Pitch (每 15 帧检测一次, 其余帧用缓存)
             if frame_number % 15 == 1 or not registrator.is_registered:
